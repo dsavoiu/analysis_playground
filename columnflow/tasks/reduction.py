@@ -254,8 +254,8 @@ class MergeReductionStats(DatasetTask, SelectorStepsMixin, CalibratorsMixin):
         std_size = (sum((s - avg_size)**2 for s in sizes) / n)**0.5
         max_size_merged = self.merged_size * 1024**2
         merge_factor = int(round(max_size_merged / avg_size))
-        merge_factor = min(max(1, merge_factor), self.dataset_info_inst.n_files)
-        n_merged = int(math.ceil(self.dataset_info_inst.n_files / merge_factor))
+        merge_factor = min(max(1, merge_factor), self.n_files)
+        n_merged = int(math.ceil(self.n_files / merge_factor))
 
         # save them
         stats = OrderedDict([
@@ -276,7 +276,7 @@ class MergeReductionStats(DatasetTask, SelectorStepsMixin, CalibratorsMixin):
         self.publish_message(" merging info ".center(40, "-"))
         self.publish_message(f"target size  : {self.merged_size} MB")
         self.publish_message(f"merging      : {merge_factor} into 1")
-        self.publish_message(f"# file before: {self.dataset_info_inst.n_files}")
+        self.publish_message(f"# file before: {self.n_files}")
         self.publish_message(f"# file after : {n_merged}")
         self.publish_message(40 * "-")
 

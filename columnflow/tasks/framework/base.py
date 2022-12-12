@@ -22,6 +22,7 @@ import order as od
 default_analysis = law.config.get_expanded("analysis", "default_analysis")
 default_config = law.config.get_expanded("analysis", "default_config")
 default_dataset = law.config.get_expanded("analysis", "default_dataset")
+default_dataset_max_files = law.config.get_expanded("analysis", "default_dataset_max_files", 0)
 
 
 class OutputLocation(enum.Enum):
@@ -542,8 +543,19 @@ class DatasetTask(ShiftTask):
         default=default_dataset,
         description=f"name of the dataset to process; default: '{default_dataset}'",
     )
+    dataset_max_files = luigi.IntParameter(
+        default=int(default_dataset_max_files),
+        description="maximum number of dataset input files (nonpositive = all)"
+    )
 
     file_merging = None
+
+    @property
+    def n_files(self):
+        n_files = self.dataset_info_inst.n_files
+        if self.dataset_max_files > 0:
+            n_files = min(n_files, self.dataset_max_files)
+        return n_files
 
     @classmethod
     def modify_param_values(cls, params):
@@ -615,12 +627,10 @@ class DatasetTask(ShiftTask):
         Returns the number of files that are handled in one branch. Consecutive merging steps are
         not handled yet.
         """
-        n_files = self.dataset_info_inst.n_files
-
         if isinstance(self.file_merging, int):
             # interpret the file_merging attribute as the merging factor itself
             # non-positive numbers mean "merge all in one"
-            n_merge = self.file_merging if self.file_merging > 0 else n_files
+            n_merge = self.file_merging if self.file_merging > 0 else self.n_files
         else:
             # no merging at all
             n_merge = 1
@@ -635,10 +645,9 @@ class DatasetTask(ShiftTask):
         is simultaneously handling input file indices 3, 4 and 5.
         """
         n_merge = self.file_merging_factor
-        n_files = self.dataset_info_inst.n_files
 
         # use iter_chunks which splits a list of length n_files into chunks of maximum size n_merge
-        chunks = law.util.iter_chunks(n_files, n_merge)
+        chunks = law.util.iter_chunks(self.n_files, n_merge)
 
         # use enumerate for simply indexing
         return dict(enumerate(chunks))
