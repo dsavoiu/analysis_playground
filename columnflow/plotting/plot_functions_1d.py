@@ -228,7 +228,9 @@ def plot_cutflow(
     category_inst: od.Category,
     style_config: dict | None = None,
     density: bool | None = False,
-    shape_norm: bool = False,
+    #shape_norm: bool = False,
+    #relative: bool = False,
+    cutflow_type: str | None = None,
     yscale: str | None = None,
     hide_errors: bool | None = None,
     process_settings: dict | None = None,
@@ -242,6 +244,9 @@ def plot_cutflow(
     hists = apply_process_settings(hists, process_settings)
     hists = apply_density_to_hists(hists, density)
 
+    # relative implies shape_norm
+    shape_norm = cutflow_type in ("norm", "relative")
+
     # setup plotting config
     plot_config = prepare_plot_config(
         hists,
@@ -249,15 +254,24 @@ def plot_cutflow(
         hide_errors=hide_errors,
     )
 
+    # switch normalization to normalizing to `initial step` bin
     if shape_norm:
-        # switch normalization to normalizing to `initial step` bin
         for key in list(plot_config):
             item = plot_config[key]
             h_key = item["hist"]
+
+            # if iterable (e.g. stack of MC histograms, sum first)
             if isinstance(h_key, Iterable):
-                norm = sum(h[{"step": "Initial"}].value for h in h_key)
+                h_key = sum(h for h in h_key)
+
+            if cutflow_type == "relative":
+                # binwise normalization to previous bin
+                idx_previous = [0] + list(range(len(h_key.axes["step"]) - 1))
+                norm = h_key[{"step": idx_previous}].values()
             else:
+                # set global normalization to initial yield
                 norm = h_key[{"step": "Initial"}].value
+
             item["kwargs"]["norm"] = norm
 
     # update xticklabels based on config
@@ -274,7 +288,11 @@ def plot_cutflow(
 
     default_style_config = {
         "ax_cfg": {
-            "ylabel": "Selection efficiency" if shape_norm else "Selection yield",
+            "ylabel": {
+                "relative": "Relative efficiency",
+                "norm": "Selection efficiency",
+                "absolute": "Selection yield",
+            }[cutflow_type],
             "xlabel": "Selection step",
             "xticklabels": xticklabels,
             "yscale": yscale,

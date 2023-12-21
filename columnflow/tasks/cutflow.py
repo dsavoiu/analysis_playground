@@ -23,7 +23,7 @@ from columnflow.tasks.framework.plotting import (
 from columnflow.tasks.framework.decorators import view_output_plots
 from columnflow.tasks.framework.remote import RemoteWorkflow
 from columnflow.tasks.selection import MergeSelectionMasks
-from columnflow.util import DotDict, dev_sandbox
+from columnflow.util import DotDict, dev_sandbox, dict_add_strict
 
 
 class CreateCutflowHistograms(
@@ -51,6 +51,8 @@ class CreateCutflowHistograms(
 
     # strategy for handling missing source columns when adding aliases on event chunks
     missing_column_alias_strategy = "original"
+    # missing_selector_step_strategy = "error"
+    missing_selector_step_strategy = "accept_all"
 
     def create_branch_map(self):
         # dummy branch map
@@ -177,6 +179,8 @@ class CreateCutflowHistograms(
                 # helper to build the point for filling, except for the step which does
                 # not support broadcasting
                 def get_point(mask=Ellipsis):
+                    if mask is True:
+                        mask = Ellipsis
                     n_events = len(events) if mask is Ellipsis else ak.sum(mask)
                     point = {
                         "process": events.process_id[mask],
@@ -203,12 +207,18 @@ class CreateCutflowHistograms(
                 # fill all other steps
                 mask = True
                 for step in steps:
-                    if step not in arr.steps.fields:
+                    if (
+                        step not in arr.steps.fields and
+                        self.missing_selector_step_strategy == "error"
+                    ):
                         raise ValueError(
                             f"step '{step}' is not defined by selector {self.selector}",
                         )
+
                     # incrementally update the mask and fill the point
-                    mask = mask & arr.steps[step]
+                    if step in arr.steps.fields:
+                        mask = mask & arr.steps[step]
+
                     fill_kwargs = get_point(mask)
                     arrays = ak.flatten(ak.cartesian(fill_kwargs))
                     histograms[var_key].fill(
@@ -272,12 +282,32 @@ class PlotCutflow(
         description="name of the variable to use for obtaining event counts; "
         f"default: '{CreateCutflowHistograms.default_variables[0]}'",
     )
+    shape_norm = law.OptionalBoolParameter(
+        default=None,
+        significant=True,
+        description="when True, the cutflow values are normalized to the "
+        "initial event yield; default: None",
+    )
+    relative = law.OptionalBoolParameter(
+        default=None,
+        significant=True,
+        description="when True, the cutflow values are calculated relative to the "
+        "previous selection step; implies --shape-norm default: None",
+    )
 
     # upstream requirements
     reqs = Requirements(
         PlotCutflowBase.reqs,
         RemoteWorkflow.reqs,
     )
+
+    @property
+    def cutflow_type(self):
+        return (
+            "relative" if self.relative
+            else "norm" if self.shape_norm
+            else "absolute"
+        )
 
     def create_branch_map(self):
         # one category per branch
@@ -315,10 +345,19 @@ class PlotCutflow(
         }
 
     def output(self):
-        return {"plots": [
-            self.target(name)
-            for name in self.get_plot_names(f"cutflow__cat_{self.branch_data}")
-        ]}
+        suffix = (
+            f"_{self.cutflow_type}"
+            if self.cutflow_type != "absolute"
+            else ""
+        )
+        return {
+            "plots": [
+                self.target(name)
+                for name in self.get_plot_names(
+                    f"cutflow{suffix}__cat_{self.branch_data}",
+                )
+            ]
+        }
 
     @law.decorator.log
     @view_output_plots
@@ -401,6 +440,12 @@ class PlotCutflow(
             # save the plot
             for outp in self.output()["plots"]:
                 outp.dump(fig, formatter="mpl")
+
+    def get_plot_parameters(self) -> DotDict:
+        # convert parameters to usable values during plotting
+        params = super().get_plot_parameters()
+        dict_add_strict(params, "cutflow_type", self.cutflow_type)
+        return params
 
 
 PlotCutflowWrapper = wrapper_factory(
