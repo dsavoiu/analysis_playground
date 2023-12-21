@@ -43,12 +43,34 @@ def category_ids(
             events, mask = self[categorizer](events, **kwargs)
             cat_mask = cat_mask & mask
 
-        # covert to nullable array with the category ids or none, then apply ak.singletons
-        ids = ak.where(cat_mask, np.float64(cat_inst.id), np.float64(np.nan))
-        category_ids.append(ak.singletons(ak.nan_to_none(ids)))
+        # categorizer did not select any events -> skip
+        # to avoid problems on concatenating empty arrays,
+        # which is still buggy in AwkwardArray
+        if not ak.any(cat_mask):
+            continue
 
-    # combine
-    category_ids = ak.concatenate(category_ids, axis=1)
+        # covert to nullable array with the category ids or none
+        ids = ak.mask(
+            ak.ones_like(cat_mask) * cat_inst.id,
+            cat_mask,
+            valid_when=True,
+        )
+
+        # apply ak.singletons and pack to avoid errors on concatenate
+        category_ids.append(ak.to_packed(ak.singletons(ids)))
+
+    # combine (loop to  work wround undefined behavior bug in AwkwardArray)
+    n_tries = 0
+    while True:
+        n_tries += 1
+        try:
+            category_ids = ak.concatenate(category_ids, axis=1)
+        except:
+            if n_tries > 20:
+                print(f"Failed after {n_tries} tries!")
+                raise
+        else:
+            break
 
     # save, optionally on a target events array
     if target_events is None:
