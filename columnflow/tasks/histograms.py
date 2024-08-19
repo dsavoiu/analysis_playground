@@ -203,6 +203,11 @@ class CreateHistograms(
                     # get variable instances
                     variable_insts = [self.config_inst.get_variable(var_name) for var_name in var_names]
 
+                    # pop last variable to profile it, if requested
+                    profile_last_var = "+" in var_key
+                    if profile_last_var:
+                        profile_variable_inst = variable_insts.pop()
+
                     # create the histogram if not present yet
                     if var_key not in histograms:
                         h = (
@@ -219,13 +224,28 @@ class CreateHistograms(
                                 label=variable_inst.get_full_x_title(),
                             )
                         # enable weights and store it
-                        histograms[var_key] = h.Weight()
+                        histograms[var_key] = h.WeightedMean() if profile_last_var else h.Weight()
 
                     # merge category ids
                     category_ids = ak.concatenate(
                         [Route(c).apply(events) for c in self.category_id_columns],
                         axis=-1,
                     )
+
+                    # helper function for evaluating the variable
+                    # over the events array
+                    def eval_variable(variable_inst: od.Variable):
+                        # prepare the expression
+                        expr = variable_inst.expression
+                        if isinstance(expr, str):
+                            route = Route(expr)
+                            def expr(events, *args, **kwargs):
+                                if len(events) == 0 and not has_ak_column(events, route):
+                                    return empty_f32
+                                return route.apply(events, null_value=variable_inst.null_value)
+
+                        # evaluate and return
+                        return expr(events)
 
                     # broadcast arrays so that each event can be filled for all its categories
                     fill_data = {
@@ -235,18 +255,13 @@ class CreateHistograms(
                         "weight": weight,
                     }
                     for variable_inst in variable_insts:
-                        # prepare the expression
-                        expr = variable_inst.expression
-                        if isinstance(expr, str):
-                            route = Route(expr)
-                            def expr(events, *args, **kwargs):
-                                if len(events) == 0 and not has_ak_column(events, route):
-                                    return empty_f32
-                                return route.apply(events, null_value=variable_inst.null_value)
-                        # apply it
-                        fill_data[variable_inst.name] = expr(events)
+                        fill_data[variable_inst.name] = eval_variable(variable_inst)
 
-                    # fill it
+                    # evaluate variable to profile and add it to the fill data
+                    if profile_last_var:
+                        fill_data["sample"] = eval_variable(profile_variable_inst)
+
+                    # fill the histogram
                     fill_hist(
                         histograms[var_key],
                         fill_data,

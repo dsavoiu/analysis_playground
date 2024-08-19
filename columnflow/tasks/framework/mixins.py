@@ -1975,12 +1975,14 @@ class VariablesMixin(ConfigTask):
                 # first, split into single- and multi-dimensional variables
                 single_vars = []
                 multi_var_parts = []
+                multi_var_is_profile = []
                 for variable in params["variables"]:
                     parts = cls.split_multi_variable(variable)
                     if len(parts) == 1:
                         single_vars.append(variable)
                     else:
                         multi_var_parts.append(parts)
+                        multi_var_is_profile.append("+" in variable)
 
                 # resolve single variables
                 variables = cls.find_config_objects(
@@ -1993,7 +1995,7 @@ class VariablesMixin(ConfigTask):
 
                 # for each multi-variable, resolve each part separately and create the full
                 # combinatorics of all possibly pattern-resolved parts
-                for parts in multi_var_parts:
+                for parts, is_profile in zip(multi_var_parts, multi_var_is_profile):
                     resolved_parts = [
                         cls.find_config_objects(
                             part,
@@ -2005,7 +2007,7 @@ class VariablesMixin(ConfigTask):
                         for part in parts
                     ]
                     variables.extend([
-                        cls.join_multi_variable(_parts)
+                        cls.join_multi_variable(_parts, profile_last=is_profile)
                         for _parts in itertools.product(*resolved_parts)
                     ])
             else:
@@ -2024,17 +2026,27 @@ class VariablesMixin(ConfigTask):
     def split_multi_variable(cls, variable: str) -> tuple[str]:
         """
         Splits a multi-dimensional *variable* given in the format ``"var_a[-var_b[-...]]"`` into
-        separate variable names using a delimiter (``"-"``) and returns a tuple.
+        separate variable names using a delimiter (``"-"``). The final delimiter may optionally be
+        a plus sign (``"+"``). Returns a tuple.
         """
-        return tuple(variable.split("-"))
+        variables = variable.split("+", maxsplit=1)
+        return tuple(variables[0].split("-")) + tuple(variables[1:])
 
     @classmethod
-    def join_multi_variable(cls, variables: Sequence[str]) -> str:
+    def join_multi_variable(cls, variables: Sequence[str], profile_last: bool = False) -> str:
         """
         Joins the name of multiple *variables* using a delimiter (``"-"``) into a single string
-        that represents a multi-dimensional variable and returns it.
+        that represents a multi-dimensional variable and returns it. If *profile_last* is true,
+        at least two variables must be provided and the final variable will be separated by a
+        different delimiter (``"+"``).
         """
-        return "-".join(map(str, variables))
+        if profile_last:
+            variables, last = variables[:-1], variables[-1]
+            if not variables:
+                raise ValueError("need more than two variables if 'profiles_last' is true")
+            return "+".join(["-".join(map(str, variables)), str(last)])
+        else:
+            return "-".join(map(str, variables))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
